@@ -1,8 +1,8 @@
 package main
 
 import (
+	"crypto/tls"
 	"errors"
-	"io"
 	"log"
 	"net"
 	"time"
@@ -11,6 +11,11 @@ import (
 const handshakeTimeout = 5 * time.Second
 
 func serve(ln net.Listener, key []byte, agentPath string) {
+	cert, err := selfSignedCert()
+	if err != nil {
+		log.Fatal(err)
+	}
+	ln = tls.NewListener(ln, &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13})
 	for {
 		c, err := ln.Accept()
 		if errors.Is(err, net.ErrClosed) {
@@ -21,22 +26,14 @@ func serve(ln net.Listener, key []byte, agentPath string) {
 			time.Sleep(100 * time.Millisecond)
 			continue
 		}
-		go handleServerConn(c, key, agentPath)
+		go handleServerConn(c.(*tls.Conn), key, agentPath)
 	}
 }
 
-func handleServerConn(c net.Conn, key []byte, agentPath string) {
+func handleServerConn(c *tls.Conn, key []byte, agentPath string) {
 	c.SetDeadline(time.Now().Add(handshakeTimeout))
-	challenge, err := newChallenge()
-	if err == nil {
-		_, err = c.Write(challenge)
-	}
-	got := make([]byte, 32)
-	if err == nil {
-		_, err = io.ReadFull(c, got)
-	}
-	if err != nil || !verifyMAC(key, challenge, got) {
-		log.Printf("rejected %s", c.RemoteAddr())
+	if err := handshake(c, key, true); err != nil {
+		log.Printf("rejected %s: %v", c.RemoteAddr(), err)
 		c.Close()
 		return
 	}

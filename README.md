@@ -17,6 +17,6 @@ ssh-agent-tunnel client -server host.docker.internal:7722 -socket /run/ssh-agent
 export SSH_AUTH_SOCK=/run/ssh-agent.sock
 ```
 
-Protocol: server sends 32 random bytes; client replies `HMAC-SHA256(key, "ssh-agent-tunnel/v1" || challenge)`; the server checks it in constant time (5s timeout) and only then connects to the agent.
+Protocol: the connection is TLS 1.3 (ephemeral self-signed server cert, not verified). Inside it, each side proves it knows the shared key with `HMAC-SHA256(key, "ssh-agent-tunnel/v2" || role || ekm)`, where `ekm` is exported keying material unique to that TLS session. The client proves first and the server answers only after checking it in constant time (5s timeout), so an unauthenticated peer never receives anything derived from the key; only then does the server connect to the agent. Binding to the session defeats man-in-the-middle and replay, so both ends are authenticated and the traffic is encrypted. Client and server must run the same version (no plaintext fallback).
 
-**Limits:** for trusted local links only. Traffic after the handshake is plaintext, and the client does not authenticate the server. On Windows the `ssh-agent` service must be running and the server must run as the same user. Pageant is not supported.
+**Limits:** the shared key is the only secret; anyone who has it can impersonate either side, so keep it private and rotate it by hand. On Windows the `ssh-agent` service must be running and the server must run as the same user. Pageant is not supported.

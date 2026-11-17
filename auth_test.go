@@ -8,23 +8,22 @@ import (
 
 func TestMAC(t *testing.T) {
 	k := []byte("0123456789abcdef0123456789abcdef")
-	c, _ := newChallenge()
-	m := computeMAC(k, c)
-	if !verifyMAC(k, c, m) {
+	e := []byte("session-one")
+	m := computeMAC(k, "server", e)
+	if !verifyMAC(k, "server", e, m) {
 		t.Fatal("valid mac rejected")
 	}
-	if string(computeMAC(k, c)) != string(m) {
-		t.Fatal("not deterministic")
-	}
-	if verifyMAC([]byte("different-key-different-key-diffe"), c, m) {
+	if verifyMAC([]byte("different-key-different-key-diffe"), "server", e, m) {
 		t.Fatal("wrong key accepted")
 	}
-	c2, _ := newChallenge()
-	if verifyMAC(k, c2, m) {
-		t.Fatal("wrong challenge accepted")
+	if verifyMAC(k, "server", []byte("session-two"), m) {
+		t.Fatal("other session accepted")
+	}
+	if verifyMAC(k, "client", e, m) {
+		t.Fatal("reflected role accepted")
 	}
 	m[0] ^= 1
-	if verifyMAC(k, c, m) {
+	if verifyMAC(k, "server", e, m) {
 		t.Fatal("tampered mac accepted")
 	}
 }
