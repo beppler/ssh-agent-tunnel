@@ -1,0 +1,55 @@
+name: Test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  # Opt-in extras: dispatch manually on a PR branch (Actions > Run workflow,
+  # or `gh workflow run test.yml --ref <branch>`). inputs is empty on
+  # push/pull_request, so those run the fast pair; dispatch can add macOS.
+  workflow_dispatch:
+    inputs:
+      macos:
+        description: Also run on macOS (slow)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  test-matrix:
+    name: test-matrix (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # macOS is opt-in: tick "Also run on macOS" when dispatching manually.
+        os: ${{ fromJSON(inputs.macos && '["ubuntu-latest","windows-latest","macos-latest"]' || '["ubuntu-latest","windows-latest"]') }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Vet
+        run: go vet ./...
+
+      # All runners have a C toolchain, so -race works everywhere.
+      - name: Test
+        run: go test -race ./...
+
+  # Single stable check name for the branch ruleset: require only "test".
+  test:
+    name: test
+    needs: test-matrix
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all matrix jobs to pass
+        if: needs.test-matrix.result != 'success'
+        run: exit 1
