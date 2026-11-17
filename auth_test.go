@@ -1,4 +1,4 @@
-package main
+package tunnel
 
 import (
 	"os"
@@ -29,8 +29,8 @@ func TestMAC(t *testing.T) {
 }
 
 func TestLoadKeyShort(t *testing.T) {
-	t.Setenv(keyEnv, "short")
-	if _, err := loadKey(""); err == nil {
+	t.Setenv(KeyEnv, "short")
+	if _, err := LoadKey(""); err == nil {
 		t.Fatal("short key accepted")
 	}
 }
@@ -38,7 +38,7 @@ func TestLoadKeyShort(t *testing.T) {
 func TestLoadKeyFile(t *testing.T) {
 	f := filepath.Join(t.TempDir(), "k")
 	os.WriteFile(f, []byte("0123456789abcdef0123456789abcdef\n"), 0o600)
-	k, err := loadKey(f)
+	k, err := LoadKey(f)
 	if err != nil || len(k) != 32 {
 		t.Fatalf("got %q, %v", k, err)
 	}

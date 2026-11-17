@@ -1,4 +1,4 @@
-package main
+package tunnel
 
 import (
 	"crypto/ecdsa"
@@ -9,6 +9,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -21,15 +22,17 @@ import (
 const (
 	macSize    = sha256.Size
 	minKeySize = 32
-	keyEnv     = "SSH_AGENT_TUNNEL_KEY"
-	macContext = "ssh-agent-tunnel/v2"
+	KeyEnv     = "SSH_AGENT_TUNNEL_KEY"
+	// ProtocolVersion is the wire-protocol marker; it is also the MAC context
+	// and the TLS keying-material label.
+	ProtocolVersion = "ssh-agent-tunnel/v2"
 )
 
 // computeMAC binds the shared key to one TLS session (ekm) and a role, so a
 // MITM terminating TLS on each leg, or a reflected MAC, fails verification.
 func computeMAC(key []byte, role string, ekm []byte) []byte {
 	h := hmac.New(sha256.New, key)
-	h.Write([]byte(macContext))
+	h.Write([]byte(ProtocolVersion))
 	h.Write([]byte(role))
 	h.Write(ekm)
 	return h.Sum(nil)
@@ -65,7 +68,7 @@ func handshake(c *tls.Conn, key []byte, isServer bool) error {
 		return err
 	}
 	st := c.ConnectionState()
-	ekm, err := st.ExportKeyingMaterial(macContext, nil, 32)
+	ekm, err := st.ExportKeyingMaterial(ProtocolVersion, nil, 32)
 	if err != nil {
 		return err
 	}
@@ -95,8 +98,8 @@ func handshake(c *tls.Conn, key []byte, isServer bool) error {
 	return recv("server")
 }
 
-// loadKey reads the shared key from path, or from $SSH_AGENT_TUNNEL_KEY if path is empty.
-func loadKey(path string) ([]byte, error) {
+// LoadKey reads the shared key from path, or from $SSH_AGENT_TUNNEL_KEY if path is empty.
+func LoadKey(path string) ([]byte, error) {
 	var key string
 	if path != "" {
 		b, err := os.ReadFile(path)
@@ -105,14 +108,24 @@ func loadKey(path string) ([]byte, error) {
 		}
 		key = string(b)
 	} else {
-		key = os.Getenv(keyEnv)
+		key = os.Getenv(KeyEnv)
 	}
 	key = strings.TrimSpace(key)
 	if key == "" {
-		return nil, fmt.Errorf("no key: use -key-file or %s", keyEnv)
+		return nil, fmt.Errorf("no key: use -key-file or %s", KeyEnv)
 	}
 	if len(key) < minKeySize {
 		return nil, errors.New("key must be at least 32 bytes")
 	}
 	return []byte(key), nil
+}
+
+// NewKey returns a fresh 32-byte key, base64-encoded, suitable for
+// SSH_AGENT_TUNNEL_KEY or a key file.
+func NewKey() string {
+	b := make([]byte, minKeySize)
+	if _, err := rand.Read(b); err != nil {
+		panic(err) // crypto/rand failure is unrecoverable
+	}
+	return base64.StdEncoding.EncodeToString(b)
 }
