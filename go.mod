@@ -1,4 +1,4 @@
-module ssh-agent-tunnel
+module go.beppler.dev.br/ssh-agent-tunnel
 
 go 1.27.4
 
