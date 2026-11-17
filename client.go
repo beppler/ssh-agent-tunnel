@@ -1,9 +1,9 @@
 package main
 
 import (
+	"crypto/tls"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"os"
@@ -48,16 +48,17 @@ func handleClientConn(c net.Conn, key []byte, server string) {
 		return
 	}
 	t.SetDeadline(time.Now().Add(handshakeTimeout))
-	challenge := make([]byte, challengeSize)
-	if _, err = io.ReadFull(t, challenge); err == nil {
-		_, err = t.Write(computeMAC(key, challenge))
-	}
-	if err != nil {
+	tc := tls.Client(t, &tls.Config{
+		MinVersion: tls.VersionTLS13,
+		// the cert is not trusted; handshake() authenticates the server via the HMAC
+		InsecureSkipVerify: true,
+	})
+	if err = handshake(tc, key, false); err != nil {
 		log.Printf("handshake: %v", err)
-		t.Close()
+		tc.Close()
 		c.Close()
 		return
 	}
-	t.SetDeadline(time.Time{})
-	relay(c, t)
+	tc.SetDeadline(time.Time{})
+	relay(c, tc)
 }
