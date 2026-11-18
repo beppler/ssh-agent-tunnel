@@ -10,9 +10,10 @@ import (
 
 // Server accepts tunnel connections and relays them to a local ssh-agent.
 type Server struct {
-	Key       []byte
-	AgentPath string       // unix socket or Windows named pipe
-	Logger    *slog.Logger // nil = discard
+	Key            []byte
+	AgentPath      string       // unix socket or Windows named pipe
+	Logger         *slog.Logger // nil = discard
+	HandshakeLimit int          // max unauthenticated handshakes at once; <=0 = default (64)
 }
 
 // handshakeLimit caps how many connections may sit in the unauthenticated
@@ -27,7 +28,11 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 		return err
 	}
 	cfg := &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13}
-	sem := make(chan struct{}, handshakeLimit)
+	limit := s.HandshakeLimit
+	if limit <= 0 {
+		limit = handshakeLimit
+	}
+	sem := make(chan struct{}, limit)
 	return acceptLoop(ctx, ln, discardIfNil(s.Logger), func(ctx context.Context, c net.Conn) {
 		tlsConn := tls.Server(c, cfg)
 		select {
