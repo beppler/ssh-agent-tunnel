@@ -57,12 +57,10 @@ func acceptLoop(ctx context.Context, ln net.Listener, log *slog.Logger, handle f
 			continue
 		}
 		add(c)
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			defer remove(c)
 			handle(ctx, c)
-		}()
+		})
 	}
 }
 

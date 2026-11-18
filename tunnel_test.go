@@ -173,7 +173,7 @@ func TestHandshakeLimitDropsExtraConns(t *testing.T) {
 			c.Close()
 		}
 	}()
-	for i := 0; i < handshakeLimit+16; i++ {
+	for range handshakeLimit + 16 {
 		c, err := net.Dial("tcp", sln.Addr().String())
 		if err != nil {
 			t.Fatal(err)
@@ -465,7 +465,7 @@ func TestServeReturnsOnCancel(t *testing.T) {
 		}
 	}
 	// both Serve calls and all handlers must be gone shortly after
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		if runtime.NumGoroutine() <= before+2 {
 			return
 		}
@@ -490,8 +490,7 @@ func TestNilLoggerSilent(t *testing.T) {
 	}
 	defer sln.Close()
 	// no agent: every connection fails at the agent dial and would log
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	done := make(chan error, 1)
 	go func() { done <- (&Server{Key: testKey, AgentPath: "no-such-socket"}).Serve(ctx, sln) }()
 	c, err := net.Dial("tcp", sln.Addr().String())
