@@ -121,6 +121,44 @@ func TestHandshakeTimeout(t *testing.T) {
 	}
 }
 
+func TestHandshakeLimitField(t *testing.T) {
+	sln, _ := net.Listen("tcp", "127.0.0.1:0")
+	defer sln.Close()
+	srv := &Server{Key: testKey, HandshakeLimit: 1}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go srv.Serve(ctx, sln)
+	read := func(c net.Conn) error {
+		c.SetDeadline(time.Now().Add(time.Second))
+		_, err := c.Read(make([]byte, 1))
+		return err
+	}
+	// Nothing else is connected, so the first conn can only time out; a
+	// timeout proves its handler claimed the one slot and is blocked in the
+	// handshake. It is never closed, so the slot stays held.
+	c1, err := net.Dial("tcp", sln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c1.Close()
+	if err := read(c1); err == nil {
+		t.Fatal("unexpected data")
+	} else if ne, ok := err.(net.Error); !ok || !ne.Timeout() {
+		t.Fatalf("first conn not held open: %v", err)
+	}
+	// The slot is held: a second conn must be dropped at once.
+	c2, err := net.Dial("tcp", sln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c2.Close()
+	if err := read(c2); err == nil {
+		t.Fatal("connection accepted beyond HandshakeLimit")
+	} else if ne, ok := err.(net.Error); ok && ne.Timeout() {
+		t.Fatal("over-limit connection not dropped")
+	}
+}
+
 func TestHandshakeLimitDropsExtraConns(t *testing.T) {
 	sln, _ := net.Listen("tcp", "127.0.0.1:0")
 	defer sln.Close()
