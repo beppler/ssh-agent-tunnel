@@ -46,17 +46,17 @@ func main() {
 		fs := flag.NewFlagSet("client", flag.ExitOnError)
 		keyFile := fs.String("key-file", "", "shared key file (default: $"+tunnel.KeyEnv+")")
 		server := fs.String("server", "host.docker.internal:7722", "server address")
-		sock := fs.String("socket", "/run/ssh-agent.sock", "unix socket to create")
+		sock := fs.String("socket", tunnel.DefaultSocketPath(), "unix socket or Windows named pipe to create")
 		fs.Parse(os.Args[2:])
 		key := mustKey(*keyFile)
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
-		ln, err := tunnel.ListenUnix(*sock)
+		ln, err := tunnel.ListenLocal(*sock)
 		if err != nil {
 			log.Fatal(err)
 		}
 		defer os.Remove(*sock)
-		log.Printf("socket %s -> %s", *sock, *server)
+		log.Printf("listener %s -> %s", *sock, *server)
 		cli := &tunnel.Client{Key: key, ServerAddr: *server, Logger: slog.Default()}
 		if err := cli.Serve(ctx, ln); err != nil {
 			log.Fatal(err)
