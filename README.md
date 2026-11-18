@@ -17,6 +17,21 @@ ssh-agent-tunnel client -server host.docker.internal:7722 -socket /run/ssh-agent
 export SSH_AUTH_SOCK=/run/ssh-agent.sock
 ```
 
+Install: `go install go.beppler.dev.br/ssh-agent-tunnel/cmd/ssh-agent-tunnel@v0.3.0`. Both ends must run the same protocol version; `ssh-agent-tunnel version` prints it (`ssh-agent-tunnel/v2`).
+
+## Library
+
+The tunnel is also importable as a Go library. A host program can run a server in-process and shut it down cleanly on context cancellation (closing the listener and all in-flight connections):
+
+```go
+import "go.beppler.dev.br/ssh-agent-tunnel"
+
+srv := &tunnel.Server{Key: key, AgentPath: ""} // AgentPath defaults via tunnel.DefaultAgentPath()
+go srv.Serve(ctx, ln)
+```
+
+The package root exposes `Server`, `Client`, `NewKey`, `LoadKey`, `DefaultAgentPath`, `ListenUnix` and `ProtocolVersion`. Library code never logs to stderr by default: pass a `*slog.Logger` or nothing (nil discards).
+
 Protocol: the connection is TLS 1.3 (ephemeral self-signed server cert, not verified). Inside it, each side proves it knows the shared key with `HMAC-SHA256(key, "ssh-agent-tunnel/v2" || role || ekm)`, where `ekm` is exported keying material unique to that TLS session. The client proves first and the server answers only after checking it in constant time (5s timeout), so an unauthenticated peer never receives anything derived from the key; only then does the server connect to the agent. Binding to the session defeats man-in-the-middle and replay, so both ends are authenticated and the traffic is encrypted. Client and server must run the same version (no plaintext fallback).
 
 **Limits:** the shared key is the only secret; anyone who has it can impersonate either side, so keep it private and rotate it by hand. On Windows the `ssh-agent` service must be running and the server must run as the same user. Pageant is not supported.

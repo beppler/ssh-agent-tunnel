@@ -1,6 +1,7 @@
-package main
+package tunnel
 
 import (
+	"context"
 	"io"
 	"net"
 )
@@ -8,7 +9,9 @@ import (
 type closeWriter interface{ CloseWrite() error }
 
 // relay copies both directions until both finish, then closes both conns.
-func relay(a, b net.Conn) {
+// When ctx is cancelled it closes both conns so pending copies unblock and
+// relay returns promptly.
+func relay(ctx context.Context, a, b net.Conn) {
 	done := make(chan struct{}, 2)
 	cp := func(dst, src net.Conn) {
 		io.Copy(dst, src)
@@ -21,6 +24,14 @@ func relay(a, b net.Conn) {
 	}
 	go cp(a, b)
 	go cp(b, a)
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
+	if ctx.Err() != nil {
+		a.Close()
+		b.Close()
+	}
 	<-done
 	<-done
 	a.Close()

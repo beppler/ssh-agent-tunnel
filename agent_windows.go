@@ -1,6 +1,6 @@
 //go:build windows
 
-package main
+package tunnel
 
 import (
 	"net"
@@ -10,4 +10,4 @@ import (
 
 func dialAgent(path string) (net.Conn, error) { return winio.DialPipe(path, nil) }
 
-func defaultAgentPath() string { return `\\.\pipe\openssh-ssh-agent` }
+func DefaultAgentPath() string { return `\\.\pipe\openssh-ssh-agent` }

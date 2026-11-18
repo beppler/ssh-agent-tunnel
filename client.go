@@ -1,17 +1,56 @@
-package main
+package tunnel
 
 import (
+	"context"
 	"crypto/tls"
-	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"os"
 	"time"
 )
 
-func listenUnix(path string) (net.Listener, error) {
-	// remove a stale socket, but never any other kind of file
+// Client listens on ln (typically a unix socket) and relays each connection
+// to a remote ssh-agent-tunnel server.
+type Client struct {
+	Key        []byte
+	ServerAddr string
+	Logger     *slog.Logger // nil = discard
+}
+
+// Serve accepts connections on ln until ctx is cancelled. It returns nil on
+// context cancellation and closes the listener plus every in-flight connection.
+func (c *Client) Serve(ctx context.Context, ln net.Listener) error {
+	return acceptLoop(ctx, ln, discardIfNil(c.Logger), c.handle)
+}
+
+func (c *Client) handle(ctx context.Context, conn net.Conn) {
+	log := discardIfNil(c.Logger)
+	t, err := net.DialTimeout("tcp", c.ServerAddr, handshakeTimeout)
+	if err != nil {
+		log.Error("dial server", "err", err)
+		conn.Close()
+		return
+	}
+	t.SetDeadline(time.Now().Add(handshakeTimeout))
+	tc := tls.Client(t, &tls.Config{
+		MinVersion: tls.VersionTLS13,
+		// the cert is not trusted; handshake() authenticates the server via the HMAC
+		InsecureSkipVerify: true,
+	})
+	if err = handshake(tc, c.Key, false); err != nil {
+		log.Error("handshake", "err", err)
+		tc.Close()
+		conn.Close()
+		return
+	}
+	tc.SetDeadline(time.Time{})
+	relay(ctx, conn, tc)
+}
+
+// ListenUnix creates a unix socket at path, replacing a stale socket but
+// never any other kind of file.
+func ListenUnix(path string) (net.Listener, error) {
 	if fi, err := os.Lstat(path); err == nil {
 		if fi.Mode()&os.ModeSocket == 0 {
 			return nil, fmt.Errorf("%s exists and is not a socket", path)
@@ -23,42 +62,4 @@ func listenUnix(path string) (net.Listener, error) {
 		return nil, err
 	}
 	return ln, os.Chmod(path, 0o600)
-}
-
-func runClient(ln net.Listener, key []byte, server string) {
-	for {
-		c, err := ln.Accept()
-		if errors.Is(err, net.ErrClosed) {
-			return
-		}
-		if err != nil {
-			log.Printf("accept: %v", err)
-			time.Sleep(100 * time.Millisecond)
-			continue
-		}
-		go handleClientConn(c, key, server)
-	}
-}
-
-func handleClientConn(c net.Conn, key []byte, server string) {
-	t, err := net.DialTimeout("tcp", server, handshakeTimeout)
-	if err != nil {
-		log.Printf("dial server: %v", err)
-		c.Close()
-		return
-	}
-	t.SetDeadline(time.Now().Add(handshakeTimeout))
-	tc := tls.Client(t, &tls.Config{
-		MinVersion: tls.VersionTLS13,
-		// the cert is not trusted; handshake() authenticates the server via the HMAC
-		InsecureSkipVerify: true,
-	})
-	if err = handshake(tc, key, false); err != nil {
-		log.Printf("handshake: %v", err)
-		tc.Close()
-		c.Close()
-		return
-	}
-	tc.SetDeadline(time.Time{})
-	relay(c, tc)
 }
