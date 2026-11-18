@@ -121,6 +121,69 @@ func TestHandshakeTimeout(t *testing.T) {
 	}
 }
 
+func TestHandshakeLimitDropsExtraConns(t *testing.T) {
+	sln, _ := net.Listen("tcp", "127.0.0.1:0")
+	defer sln.Close()
+	startServer(t, sln, testKey, "")
+	// Dial more than the limit of stalled connections: the first 64 handler
+	// goroutines to run each claim a slot and then block in the handshake,
+	// so all slots end up held no matter what order the handlers run in;
+	// the surplus connections are dropped.
+	var stalled []net.Conn
+	defer func() {
+		for _, c := range stalled {
+			c.Close()
+		}
+	}()
+	for i := 0; i < handshakeLimit+16; i++ {
+		c, err := net.Dial("tcp", sln.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		stalled = append(stalled, c)
+	}
+	// One more must be dropped immediately, without waiting for a slot.
+	// Retry in case a slot is still being claimed.
+	dropped := false
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		extra, err := net.Dial("tcp", sln.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		extra.SetDeadline(time.Now().Add(time.Second))
+		_, err = extra.Read(make([]byte, 1))
+		extra.Close()
+		if err == nil {
+			t.Fatal("server accepted connection beyond the handshake limit")
+		}
+		if ne, ok := err.(net.Error); !ok || !ne.Timeout() {
+			dropped = true
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !dropped {
+		t.Fatal("server left over-limit connection open")
+	}
+	// Free the slots; the server must accept a real client again.
+	for _, c := range stalled {
+		c.Close()
+	}
+	stalled = nil
+	time.Sleep(100 * time.Millisecond)
+	c, err := net.Dial("tcp", sln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tc := tls.Client(c, &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})
+	defer tc.Close()
+	tc.SetDeadline(time.Now().Add(2 * time.Second))
+	if err := handshake(tc, testKey, false); err != nil {
+		t.Fatalf("server refused valid client after limit cleared: %v", err)
+	}
+}
+
 func TestPlaintextClientRejected(t *testing.T) {
 	dir := t.TempDir()
 	aln, _ := net.Listen("unix", filepath.Join(dir, "a.sock"))

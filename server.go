@@ -15,6 +15,10 @@ type Server struct {
 	Logger    *slog.Logger // nil = discard
 }
 
+// handshakeLimit caps how many connections may sit in the unauthenticated
+// handshake at once; established agent sessions do not count against it.
+const handshakeLimit = 64
+
 // Serve accepts connections on ln until ctx is cancelled. It returns nil on
 // context cancellation and closes the listener plus every in-flight connection.
 func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
@@ -23,25 +27,38 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 		return err
 	}
 	cfg := &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13}
+	sem := make(chan struct{}, handshakeLimit)
 	return acceptLoop(ctx, ln, discardIfNil(s.Logger), func(ctx context.Context, c net.Conn) {
-		s.handle(ctx, tls.Server(c, cfg))
+		tlsConn := tls.Server(c, cfg)
+		select {
+		case sem <- struct{}{}:
+		default:
+			c.Close() // limit reached: drop silently so peers cannot flood the log
+			return
+		}
+		authenticated := s.auth(tlsConn)
+		<-sem
+		if !authenticated {
+			return
+		}
+		agent, err := dialAgent(s.AgentPath)
+		if err != nil {
+			discardIfNil(s.Logger).Error("agent dial", "err", err)
+			tlsConn.Close()
+			return
+		}
+		relay(ctx, tlsConn, agent)
 	})
 }
 
-func (s *Server) handle(ctx context.Context, c *tls.Conn) {
-	log := discardIfNil(s.Logger)
+// auth runs the TLS+HMAC handshake; on failure it closes the connection and returns false.
+func (s *Server) auth(c *tls.Conn) bool {
 	c.SetDeadline(time.Now().Add(handshakeTimeout))
 	if err := handshake(c, s.Key, true); err != nil {
-		log.Warn("rejected", "addr", c.RemoteAddr(), "err", err)
+		discardIfNil(s.Logger).Warn("rejected", "addr", c.RemoteAddr(), "err", err)
 		c.Close()
-		return
+		return false
 	}
 	c.SetDeadline(time.Time{})
-	agent, err := dialAgent(s.AgentPath)
-	if err != nil {
-		log.Error("agent dial", "err", err)
-		c.Close()
-		return
-	}
-	relay(ctx, c, agent)
+	return true
 }
